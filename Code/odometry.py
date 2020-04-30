@@ -36,12 +36,53 @@ def EstimateFundamentalMatrix(x1,x2):
         A[i,8] = 1
 
     U,S,V = np.linalg.svd(A)
-
     f = V[:,-1]
-    print(f)
     F = np.reshape(f,(3,3)).T
 
     return F
+
+
+def inlierRANSAC(matches):
+    S_in = set()
+    M = len(matches)
+    N = 8
+    n = 0
+    epsilon = 10
+    for i in range(M):
+        x1,x2 = [],[]
+        k_list = []
+        for j in range(8):
+            k = random.randint(0,len(matches)-1)
+            ind1 = matches[k][0].trainIdx
+            ind2 = matches[k][1].trainIdx
+            x1.append(kp1[ind1].pt)
+            x2.append(kp2[ind2].pt)
+            k_list.append(k)
+        F = EstimateFundamentalMatrix(x1,x2)
+
+        S = []
+        for j in range(N):
+            x1j = np.array([x1[j][0],x1[j][1],1])
+            x2j = np.array([x2[j][0],x2[j][1],1])
+            val = x2j.T.dot(F).dot(x1j)
+            if abs(val) < epsilon:
+                S.append(k_list[j])
+        
+        if n <= len(S):
+            n = len(S)
+            for k in k_list:
+                S_in.add(k)
+    
+    inliers = []
+    while S_in:
+        inliers.append(S_in.pop())
+
+    print(len(inliers))
+    print(M)
+
+    return inliers
+
+
 
 
 onlyFirstFrame = True
@@ -74,23 +115,10 @@ for path in frame_paths:
     kp2, des2 = surf.detectAndCompute(cur_img,None)
 
     # Match keypoints to find correspondencies
-    M = flann.knnMatch(des1,des2,k=2)
+    matches = flann.knnMatch(des1,des2,k=2)
 
-    x1,x2 = [],[]
-    for i in range(8):
-        j = random.randint(0,len(M))
-        ind1 = M[j][0].trainIdx
-        ind2 = M[j][1].trainIdx
-        x1.append(kp1[ind1].pt)
-        x2.append(kp2[ind2].pt)
-
-    F = EstimateFundamentalMatrix(x1,x2)
-
-    print(F)
-
-
-    # Estimate the Fundamental Matrix 
-        # Find at eight 
+    # Find set of inliers using RANSAC
+    inliers = inlierRANSAC(matches)
 
     prev_img = cur_img
 
