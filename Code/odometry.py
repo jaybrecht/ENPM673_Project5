@@ -1,8 +1,11 @@
 import cv2
 import numpy as np
+import matplotlib.pyplot as plt
+from mpl_toolkits.mplot3d import Axes3D
 import random
 import os
 import sys
+
 
 sys.path.append('../Oxford_dataset')
 
@@ -98,6 +101,10 @@ def extractCameraPose(E):
     return Cset,Rset
 
 
+# def plotTrajectory():
+
+
+
 def LinearTriangulation(K, C1, R1, C2, R2, inliers):
     I=np.identity(3)
     IC1=np.concatenate((I,-C1),axis=1)
@@ -121,7 +128,9 @@ def LinearTriangulation(K, C1, R1, C2, R2, inliers):
         x_=pt2[0]
         y_=pt2[1]
 
-        A=np.array([y*p3.T-p2.T,p1.T-x*p3.T,y_*p3_.T-p2_.T,p1_.T-x_*p3_.T])
+        A=np.array([y*p3-p2,p1-x*p3,y_*p3_-p2_,p1_-x_*p3_])
+
+        print(A.shape)
 
         U,D,Vt = np.linalg.svd(A)
 
@@ -208,6 +217,12 @@ def analyzeVideo():
     kp1, des1 = surf.detectAndCompute(prev_img,None)
 
     camera_origin = np.array([[0,0,0]],dtype='float64').T
+    C0 = np.array([[0,0,0]]).T
+    R0 = np.identity(3)
+
+    fig = plt.figure()
+    ax = fig.add_subplot(111, projection='3d')
+    plt.ion()
 
     for path in frame_paths:
         cur_img = raw2Undistorted(path,LUT)
@@ -234,17 +249,27 @@ def analyzeVideo():
 
         # Compute the real world coordinates for each set of matched points 
         Xset = []
+
         for C,R in zip(Cset,Rset):
-            C0 = np.array([[0,0,0]]).T
-            R0 = np.identity(3)
             X = LinearTriangulation(K, C0, R0, C, R, inliers)
             Xset.append(X)
 
         C,R = Cheirality(Cset,Rset,Xset)
 
+        last_point = camera_origin.copy()
         camera_origin += C
 
-        print(camera_origin)
+        # ax.scatter3D(camera_origin[0], camera_origin[1], camera_origin[2])
+
+        xs = [last_point[0,0],camera_origin[0,0]]
+
+        ys = [last_point[1,0],camera_origin[1,0]]
+
+        zs = [last_point[2,0],camera_origin[2,0]]
+
+        ax.plot3D(xs,ys,zs,'gray')
+        plt.draw()
+        plt.pause(.001)
 
         match_img = showMatches(prev_img,cur_img,inliers)
         cv2.imshow("Matches",match_img)
@@ -253,6 +278,8 @@ def analyzeVideo():
         # change current values to previous values for next loop
         prev_img = cur_img
         kp1, des1 = kp2, des2
+        C0 = C
+        R0 = R
 
         # cv2.imshow('Frame',cur_img)
 
