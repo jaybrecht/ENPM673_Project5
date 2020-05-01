@@ -81,12 +81,14 @@ def inlierRANSAC(x_a,x_b):
     return Best_F,S_in
 
 
-def showMatches(img1,img2,matches,inliers):
+def showMatches(img1,img2,inliers):
     w = img1.shape[1]
     match_img = np.concatenate((img1,img2),axis=1)
     for p1,p2 in inliers:
-        p1 = (int(p1[0]),int(p1[1]))
-        p2 = (int(p2[0]+w),int(p2[1]))
+        x,y = p1
+        x_,y_ = p2
+        p1 = (int(x),int(y))
+        p2 = (int(x_+w),int(y_))
         match_img = cv2.circle(match_img,p1,3,(0,0,255),-1)
         match_img = cv2.circle(match_img,p2,3,(0,0,255),-1)
         match_img = cv2.line(match_img,p1,p2,(0,255,0),1)
@@ -167,19 +169,20 @@ if __name__ == "__main__":
         ind2 = matches[i][1].trainIdx
         x,y = kp1[ind1].pt
         x_,y_ = kp2[ind2].pt
-        x_a.append(kp1[ind1].pt)
-        x_b.append(kp2[ind2].pt)
+        x_a.append((x,y))
+        x_b.append((x_,y_))
 
     Best_F,inliers = inlierRANSAC(x_a,x_b)
 
-    # match_img = showMatches(img1,img2,matches,inliers)
+    match_img = showMatches(img1,img2,inliers)
+    cv2.imshow("Our Matches",match_img)
     # Need to draw only good matches, so create a mask
     matchesMask = [[0,0] for i in range(len(matches))]
 
     # ratio test as per Lowe's paper
-    for i,(m,n) in enumerate(matches):
-        if m.distance < 0.7*n.distance:
-            matchesMask[i]=[1,0]
+    # for i,(m,n) in enumerate(matches):
+    #     if m.distance < 0.7*n.distance:
+    #         matchesMask[i]=[1,0]
 
     draw_params = dict(matchColor = (0,255,0),
                        singlePointColor = (255,0,0),
@@ -188,7 +191,7 @@ if __name__ == "__main__":
 
     img3 = cv2.drawMatchesKnn(img1,kp1,img2,kp2,matches,None,**draw_params)
 
-    cv2.imshow("Matches",img3)
+    cv2.imshow("CV2 Matches",img3)
     cv2.waitKey(0)
 
 
