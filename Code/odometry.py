@@ -82,70 +82,69 @@ def extractCameraPose(E):
 
     U,D,Vt = np.linalg.svd(E)
 
-    C_ = [U[:,2],-U[:,2],U[:,2],-U[:,2]]
-    R_ = [U @ W @ Vt,U @ W @ Vt,U @ W.T @ Vt,U @ W.T @ Vt]
+    C = [U[:,2],-U[:,2],U[:,2],-U[:,2]]
+    R = [U @ W @ Vt,U @ W @ Vt,U @ W.T @ Vt,U @ W.T @ Vt]
 
-    C,R = [],[]
-    for c,r in zip(C_,R_):
+    Cset,Rset = [],[]
+    for c,r in zip(C,R):
         det = np.linalg.det(r)
-        print(det)
-        if det == -1:
+        if int(det) == -1:
             c *= -1
             r *= -1
-        C.append(c)
-        R.append(r)
+        c.shape = (3,1)
+        Cset.append(c)
+        Rset.append(r)
 
-    return C,R
+    return Cset,Rset
 
 
 def LinearTriangulation(K, C1, R1, C2, R2, inliers):
-	I=np.ones(3,3)
-	IC1=np.concatenate(I,-C1,axis=1)
-	P1=K @ R1 @ IC1
+    I=np.identity(3)
+    IC1=np.concatenate((I,-C1),axis=1)
+    P1=K @ R1 @ IC1
 
-	IC2=np.concatenate(I,-C2,axis=1)
-	P2=K @ R2 @ IC2
+    IC2=np.concatenate((I,-C2),axis=1)
+    P2=K @ R2 @ IC2
 
-	p1=P1[:,0]
-	p2=P1[:,0]
-	p3=P1[:,0]
+    p1=P1[:,0]
+    p2=P1[:,0]
+    p3=P1[:,0]
 
-	p1_=P2[:,0]
-	p2_=P2[:,0]
-	p3_=P2[:,0]
+    p1_=P2[:,0]
+    p2_=P2[:,0]
+    p3_=P2[:,0]
 
-	X=[]
-	for pt1, pt2 in inliers:
-		x=pt1[0]
-		y=pt1[1]
-		x_=pt2[0]
-		y_=pt2[1]
+    X=[]
+    for pt1, pt2 in inliers:
+        x=pt1[0]
+        y=pt1[1]
+        x_=pt2[0]
+        y_=pt2[1]
 
-		A=np.array([[y*p3.T-p2.T],[p1.T-x*p3.T],[y_*p3_.T-p2_.T],[p1_.T-x_*p3_.T]])
+        A=np.array([y*p3.T-p2.T,p1.T-x*p3.T,y_*p3_.T-p2_.T,p1_.T-x_*p3_.T])
 
-		U,D,Vt = np.linalg.svd(A)
-		X.append(Vt[-1,:])
+        U,D,Vt = np.linalg.svd(A)
 
-	return X
-
+        X_ = Vt[-1,:]
+        X_.shape = (3,1)
+        X.append(X_) 
+    return X
 
 
 def Cheirality(Cset,Rset,Xset):
-	counts=[]
-	for C,R in zip(Cset,Rset):
-		count=0
-		r3=R[:,-1]
-		for X in Xset:
-			if r3@(X-C)>0:
-				count+=1
-		counts.append(count)
+    counts=[]
+    for C,R,X in zip(Cset,Rset,Xset):
+        count=0
+        r3=R[:,-1]
+        for x in X:
+            val = r3@(x-C)
+            if val>0:
+                count+=1
+        counts.append(count)
 
-	ind=counts.index(max(counts))
+    ind=counts.index(max(counts))
 
-	return Cset[ind], Rset[ind]
-
-
-
+    return Cset[ind], Rset[ind]
 
 def showMatches(img1,img2,inliers):
     w = img1.shape[1]
@@ -183,7 +182,7 @@ def drawMatches(matches):
 
 
 def analyzeVideo():
-    onlyFirstFrame = True
+    onlyFirstFrame = False
     path = '../Oxford_dataset/stereo/centre/'
     frame_paths = []
     for img in os.listdir(path):
@@ -208,6 +207,8 @@ def analyzeVideo():
     prev_img =  raw2Undistorted(frame_paths.pop(0),LUT)
     kp1, des1 = surf.detectAndCompute(prev_img,None)
 
+    camera_origin = np.array([[0,0,0]],dtype='float64').T
+
     for path in frame_paths:
         cur_img = raw2Undistorted(path,LUT)
 
@@ -223,20 +224,31 @@ def analyzeVideo():
             x_b.append(kp2[matches[k][0].trainIdx].pt)
 
         # Find set of inliers using RANSAC
-        F,inliers = inlierRANSAC(x_a,x_b,iterations=100)
+        F,inliers = inlierRANSAC(x_a,x_b,iterations=10)
 
         # Estimate Essential Matrix
         E = K.T @ F @ K
 
         # Extract 4 Possible Camera Poses
-        C,R = extractCameraPose(E)
+        Cset,Rset = extractCameraPose(E)
 
-        print(C)
-        print(R)
+        # Compute the real world coordinates for each set of matched points 
+        Xset = []
+        for C,R in zip(Cset,Rset):
+            C0 = np.array([[0,0,0]]).T
+            R0 = np.identity(3)
+            X = LinearTriangulation(K, C0, R0, C, R, inliers)
+            Xset.append(X)
+
+        C,R = Cheirality(Cset,Rset,Xset)
+
+        camera_origin += C
+
+        print(camera_origin)
 
         match_img = showMatches(prev_img,cur_img,inliers)
         cv2.imshow("Matches",match_img)
-        cv2.waitKey(0)
+        # cv2.waitKey(0)
 
         # change current values to previous values for next loop
         prev_img = cur_img
@@ -244,8 +256,8 @@ def analyzeVideo():
 
         # cv2.imshow('Frame',cur_img)
 
-        # if (cv2.waitKey(10) == ord('q')):
-        #     exit()
+        if (cv2.waitKey(10) == ord('q')):
+            exit()
 
         if onlyFirstFrame:
             exit()
