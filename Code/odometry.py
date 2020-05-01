@@ -20,9 +20,9 @@ def raw2Undistorted(img_path,LUT):
 
 
 def EstimateFundamentalMatrix(x1,x2):
-    A = np.zeros((8,9))
+    A = np.zeros((len(x1),9))
 
-    for i in range(8):
+    for i in range(len(x1)):
         x,x_,y,y_ = x1[i][0],x2[i][0],x1[i][1],x2[i][1]
         
         A[i,0] = x*x_
@@ -35,102 +35,161 @@ def EstimateFundamentalMatrix(x1,x2):
         A[i,7] = y_
         A[i,8] = 1
 
-    U,S,V = np.linalg.svd(A)
-    f = V[:,-1]
-    F = np.reshape(f,(3,3)).T
+    U,S,Vh = np.linalg.svd(A)
+    f = Vh[-1,:]
+
+    F = np.reshape(f,(3,3))
+
+    U,S,Vh = np.linalg.svd(F)
+    S[-1] = 0
+    F = U @ np.diagflat(S) @ Vh
 
     return F
 
 
-def inlierRANSAC(matches):
-    S_in = set()
-    M = len(matches)
-    N = 8
+def inlierRANSAC(x_a,x_b):
+    S_in = []
+    M = 10
+    points = 8
     n = 0
-    epsilon = 10
+    epsilon = .05
+
     for i in range(M):
         x1,x2 = [],[]
-        k_list = []
-        for j in range(8):
-            k = random.randint(0,len(matches)-1)
-            ind1 = matches[k][0].trainIdx
-            ind2 = matches[k][1].trainIdx
-            x1.append(kp1[ind1].pt)
-            x2.append(kp2[ind2].pt)
-            k_list.append(k)
+
+        for j in range(points):
+            k = random.randint(0,len(x_a)-1)
+            x1.append(x_a[k])
+            x2.append(x_b[k])
+
         F = EstimateFundamentalMatrix(x1,x2)
 
         S = []
-        for j in range(N):
-            x1j = np.array([x1[j][0],x1[j][1],1])
-            x2j = np.array([x2[j][0],x2[j][1],1])
-            val = x2j.T.dot(F).dot(x1j)
-            if abs(val) < epsilon:
-                S.append(k_list[j])
-        
-        if n <= len(S):
+        for p1,p2 in zip(x_a,x_b):
+            x1j = np.array([p1[0],p1[1],1])
+            x2j = np.array([p2[0],p2[1],1])
+            val = abs(x1j.T @ F @ x2j)
+            if val < epsilon:
+                S.append([p1,p2])
+
+        if len(S) >= n:
             n = len(S)
-            for k in k_list:
-                S_in.add(k)
-    
-    inliers = []
-    while S_in:
-        inliers.append(S_in.pop())
+            S_in = S
+            Best_F = F
 
-    print(len(inliers))
-    print(M)
-
-    return inliers
+    print(len(S))
+    return Best_F,S_in
 
 
+def showMatches(img1,img2,matches,inliers):
+    w = img1.shape[1]
+    match_img = np.concatenate((img1,img2),axis=1)
+    for p1,p2 in inliers:
+        p1 = (int(p1[0]),int(p1[1]))
+        p2 = (int(p2[0]+w),int(p2[1]))
+        match_img = cv2.circle(match_img,p1,3,(0,0,255),-1)
+        match_img = cv2.circle(match_img,p2,3,(0,0,255),-1)
+        match_img = cv2.line(match_img,p1,p2,(0,255,0),1)
+
+    return match_img
 
 
-onlyFirstFrame = True
-frame_paths = []
-for img in os.listdir(path):
-    frame_paths.append(path+img)
+def analyzeVideo():
+    onlyFirstFrame = True
+    frame_paths = []
+    for img in os.listdir(path):
+        frame_paths.append(path+img)
 
-frame_paths.sort()
+    frame_paths.sort()
 
-fx, fy, cx, cy, G_camera_image, LUT = ReadCameraModel('../Oxford_dataset/model')
+    fx, fy, cx, cy, G_camera_image, LUT = ReadCameraModel('../Oxford_dataset/model')
 
-# removes poorly exposed frames
-for i in range(22):
-    frame_paths.pop(0)
+    # removes poorly exposed frames
+    for i in range(22):
+        frame_paths.pop(0)
 
-surf = cv2.xfeatures2d.SURF_create()
+    surf = cv2.xfeatures2d.SURF_create()
 
-FLANN_INDEX_KDTREE = 1
-index_params = {'algorithm':FLANN_INDEX_KDTREE, 'trees':5}
-search_params = {'checks':50}   # or pass empty dictionary
-flann = cv2.FlannBasedMatcher(index_params,search_params)
+    FLANN_INDEX_KDTREE = 1
+    index_params = {'algorithm':FLANN_INDEX_KDTREE, 'trees':5}
+    search_params = {'checks':50}   # or pass empty dictionary
+    flann = cv2.FlannBasedMatcher(index_params,search_params)
 
-prev_img =  raw2Undistorted(frame_paths.pop(0),LUT)
+    prev_img =  raw2Undistorted(frame_paths.pop(0),LUT)
 
-for path in frame_paths:
-    cur_img = raw2Undistorted(path,LUT)
+    for path in frame_paths:
+        cur_img = raw2Undistorted(path,LUT)
 
-    # Find keypoints
-    kp1, des1 = surf.detectAndCompute(prev_img,None)
-    kp2, des2 = surf.detectAndCompute(cur_img,None)
+        # Find keypoints
+        kp1, des1 = surf.detectAndCompute(prev_img,None)
+        kp2, des2 = surf.detectAndCompute(cur_img,None)
+
+        # Match keypoints to find correspondencies
+        matches = flann.knnMatch(des1,des2,k=2)
+
+        # Find set of inliers using RANSAC
+        Best_F,inliers = inlierRANSAC(matches)
+
+        match_img = showMatches(prev_img,cur_img,matches,inliers)
+        cv2.imshow("Matches",match_img)
+        cv2.waitKey(0)
+
+        prev_img = cur_img
+
+        cv2.imshow('Frame',cur_img)
+
+        if (cv2.waitKey(10) == ord('q')):
+            exit()
+
+        if onlyFirstFrame:
+            exit()
+
+if __name__ == "__main__":
+    img1 = cv2.imread('pic1.jpg')
+    img2 = cv2.imread('pic2.jpg')
+
+    surf = cv2.xfeatures2d.SURF_create()
+
+    FLANN_INDEX_KDTREE = 1
+    index_params = {'algorithm':FLANN_INDEX_KDTREE, 'trees':5}
+    search_params = {'checks':50}   # or pass empty dictionary
+    flann = cv2.FlannBasedMatcher(index_params,search_params)
+
+    kp1, des1 = surf.detectAndCompute(img1,None)
+    kp2, des2 = surf.detectAndCompute(img2,None)
 
     # Match keypoints to find correspondencies
     matches = flann.knnMatch(des1,des2,k=2)
 
-    # Find set of inliers using RANSAC
-    inliers = inlierRANSAC(matches)
+    x_a, x_b = [],[]
+    for i in range(len(matches)):
+        ind1 = matches[i][0].queryIdx
+        ind2 = matches[i][1].trainIdx
+        x,y = kp1[ind1].pt
+        x_,y_ = kp2[ind2].pt
+        x_a.append(kp1[ind1].pt)
+        x_b.append(kp2[ind2].pt)
 
-    prev_img = cur_img
+    Best_F,inliers = inlierRANSAC(x_a,x_b)
 
-    cv2.imshow('Frame',cur_img)
+    # match_img = showMatches(img1,img2,matches,inliers)
+    # Need to draw only good matches, so create a mask
+    matchesMask = [[0,0] for i in range(len(matches))]
 
-    if (cv2.waitKey(10) == ord('q')):
-        exit()
+    # ratio test as per Lowe's paper
+    for i,(m,n) in enumerate(matches):
+        if m.distance < 0.7*n.distance:
+            matchesMask[i]=[1,0]
 
-    if onlyFirstFrame:
-        exit()
+    draw_params = dict(matchColor = (0,255,0),
+                       singlePointColor = (255,0,0),
+                       matchesMask = None,
+                       flags = 0)
 
+    img3 = cv2.drawMatchesKnn(img1,kp1,img2,kp2,matches,None,**draw_params)
 
+    cv2.imshow("Matches",img3)
+    cv2.waitKey(0)
 
 
 
