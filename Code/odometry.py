@@ -98,6 +98,54 @@ def extractCameraPose(E):
     return C,R
 
 
+def LinearTriangulation(K, C1, R1, C2, R2, inliers):
+	I=np.ones(3,3)
+	IC1=np.concatenate(I,-C1,axis=1)
+	P1=K @ R1 @ IC1
+
+	IC2=np.concatenate(I,-C2,axis=1)
+	P2=K @ R2 @ IC2
+
+	p1=P1[:,0]
+	p2=P1[:,0]
+	p3=P1[:,0]
+
+	p1_=P2[:,0]
+	p2_=P2[:,0]
+	p3_=P2[:,0]
+
+	X=[]
+	for pt1, pt2 in inliers:
+		x=pt1[0]
+		y=pt1[1]
+		x_=pt2[0]
+		y_=pt2[1]
+
+		A=np.array([[y*p3.T-p2.T],[p1.T-x*p3.T],[y_*p3_.T-p2_.T],[p1_.T-x_*p3_.T]])
+
+		U,D,Vt = np.linalg.svd(A)
+		X.append(Vt[-1,:])
+
+	return X
+
+
+
+def Cheirality(Cset,Rset,Xset):
+	counts=[]
+	for C,R in zip(Cset,Rset):
+		count=0
+		r3=R[:,-1]
+		for X in Xset:
+			if r3@(X-C)>0:
+				count+=1
+		counts.append(count)
+
+	ind=counts.index(max(counts))
+
+	return Cset[ind], Rset[ind]
+
+
+
 
 def showMatches(img1,img2,inliers):
     w = img1.shape[1]
