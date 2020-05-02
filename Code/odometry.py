@@ -5,7 +5,7 @@ from mpl_toolkits.mplot3d import Axes3D
 import random
 import os
 import sys
-
+import math
 
 sys.path.append('../Oxford_dataset')
 
@@ -17,6 +17,33 @@ def raw2Undistorted(img_path,LUT):
     img = cv2.cvtColor(img,cv2.COLOR_BayerGR2BGR)
     img = UndistortImage(img,LUT)
     return img
+
+
+def convertImageCoordToCenter(pts,w,h):
+    center_points = []
+    for x,y in pts:
+        new_x = x-(w/2)
+        new_y = -(y-(h/2))
+        center_points.append((new_x,new_y))
+    
+    d_sum = 0
+    for x,y in center_points:
+        d_sum += math.sqrt(x**2+y**2)
+
+    msd = d_sum/len(center_points)
+
+    scale_factor = 2
+    d_sum = 0
+    scaled_points = []
+    for x,y in center_points:
+        x *= scale_factor/msd
+        y *= scale_factor/msd
+        d_sum += math.sqrt(x**2+y**2)
+        scaled_points.append((x,y))
+
+    new_msd = d_sum/len(scaled_points)
+
+    return scaled_points
 
 
 def EstimateFundamentalMatrix(x1,x2):
@@ -36,7 +63,7 @@ def EstimateFundamentalMatrix(x1,x2):
         A[i,8] = 1
 
     U,S,Vh = np.linalg.svd(A)
-    f = Vh[-1,:]
+    f = Vh[-1]
 
     F = np.reshape(f,(3,3))
 
@@ -80,13 +107,24 @@ def inlierRANSAC(x_a,x_b,iterations):
     return Best_F,S_in
 
 
+def estimateEssentialMatrix(F,K):
+    E = K.T @ F @ K
+    U,S,Vh = np.linalg.svd(E)
+    S_ = np.array([[1,0,0],[0,1,0],[0,0,0]])
+    E = U @ S_ @ Vh
+
+    return E
+
+
+
 def extractCameraPose(E):
     W = np.array([[0,-1,0],[1,0,0],[0,0,1]])
 
     U,D,Vt = np.linalg.svd(E)
-
+    print(U)
+    print(U[:,2])
     C = [U[:,2],-U[:,2],U[:,2],-U[:,2]]
-    R = [U @ W @ Vt,U @ W @ Vt,U @ W.T @ Vt,U @ W.T @ Vt]
+    R = [U @ W @ Vt, U @ W @ Vt, U @ W.T @ Vt, U @ W.T @ Vt]
 
     Cset,Rset = [],[]
     for c,r in zip(C,R):
@@ -101,59 +139,101 @@ def extractCameraPose(E):
     return Cset,Rset
 
 
-# def plotTrajectory():
+def image2Homogenous(pts,K,R,T):
+    P = K @ np.concatenate((R,T),axis=1)
+    P_inv = np.linalg.inv(P)
+    X = []
+    for x,y in pts:
+        image_coord = np.array([[x],[y],[1]])
+        homogenous_coord = P_inv @ image_coord 
+        X.append(homogenous_coord)
 
+    return X
+
+
+def checkCheirality(X_,R,T):
+    r3 = R[2,:]
+    count = 0
+    for X in X_:
+        depth = r3 @ (X-T)
+        if depth > 0:
+            count += 1
+
+    return count
 
 
 def LinearTriangulation(K, C1, R1, C2, R2, inliers):
-    I=np.identity(3)
-    IC1=np.concatenate((I,-C1),axis=1)
-    P1=K @ R1 @ IC1
+    # I=np.identity(3)
+    # P1=K @ R1 @ np.concatenate((I,-C1),axis=1)
+    # P2=K @ R2 @ np.concatenate((I,-C2),axis=1)
 
-    IC2=np.concatenate((I,-C2),axis=1)
-    P2=K @ R2 @ IC2
+    P1=K @ np.concatenate((R1,C1),axis=1)
+    P2=K @ np.concatenate((R2,C2),axis=1)
 
-    p1=P1[:,0]
-    p2=P1[:,0]
-    p3=P1[:,0]
+    p1=P1[0,:]
+    p2=P1[1,:]
+    p3=P1[2,:]
 
-    p1_=P2[:,0]
-    p2_=P2[:,0]
-    p3_=P2[:,0]
+    p1_=P2[0,:]
+    p2_=P2[1,:]
+    p3_=P2[2,:]
 
     X=[]
     for pt1, pt2 in inliers:
-        x=pt1[0]
-        y=pt1[1]
-        x_=pt2[0]
-        y_=pt2[1]
+        x,y = pt1
+        x_,y_ = pt2
 
-        A=np.array([y*p3-p2,p1-x*p3,y_*p3_-p2_,p1_-x_*p3_])
+        r1 = y*p3-p2
+        r2 = p1-x*p3
+        r3 = y_*p3_-p2_
+        r4 = p1_-x_*p3_
 
-        print(A.shape)
+        A=np.stack((r1,r2,r3,r4))
 
         U,D,Vt = np.linalg.svd(A)
 
-        X_ = Vt[-1,:]
-        X_.shape = (3,1)
+        hc = Vt[-1]
+        
+        X_ = np.array([[hc[0]],[hc[1]],[hc[2]]])
+
         X.append(X_) 
+
     return X
 
 
 def Cheirality(Cset,Rset,Xset):
     counts=[]
-    for C,R,X in zip(Cset,Rset,Xset):
+    colors = ['red','green','yellow','blue']
+    markers = ['s','s','o','.']
+
+    fig = plt.figure()
+    ax = fig.add_subplot(111)
+    plt.ylabel('Z')
+    plt.xlabel('X')
+    plt.axis([-10, 10, -10, 10])
+    x,y,z = [],[],[]
+
+    for C,R,X_,color,marker in zip(Cset,Rset,Xset,colors,markers):
         count=0
-        r3=R[:,-1]
-        for x in X:
-            val = r3@(x-C)
+        r3=R[-1,:]
+        for X in X_:
+            x.append(X[0])
+            y.append(X[1])
+            z.append(X[2])
+            val = r3@(X-C)
             if val>0:
                 count+=1
         counts.append(count)
+        ax.scatter(x,y,c=color,marker=marker,label=color)
+
+    plt.legend(loc='upper left');
+    plt.show()
+
 
     ind=counts.index(max(counts))
 
     return Cset[ind], Rset[ind]
+
 
 def showMatches(img1,img2,inliers):
     w = img1.shape[1]
@@ -191,7 +271,7 @@ def drawMatches(matches):
 
 
 def analyzeVideo():
-    onlyFirstFrame = False
+    onlyFirstFrame = True
     path = '../Oxford_dataset/stereo/centre/'
     frame_paths = []
     for img in os.listdir(path):
@@ -217,12 +297,21 @@ def analyzeVideo():
     kp1, des1 = surf.detectAndCompute(prev_img,None)
 
     camera_origin = np.array([[0,0,0]],dtype='float64').T
+    last_point = camera_origin
     C0 = np.array([[0,0,0]]).T
     R0 = np.identity(3)
 
-    fig = plt.figure()
-    ax = fig.add_subplot(111, projection='3d')
-    plt.ion()
+    # fig = plt.figure()
+    # plt.ylabel('Z')
+    # plt.xlabel('X')
+    # plt.axis([-10, 10, -10, 10])
+
+    # ax = fig.add_subplot(111, projection='3d')
+    # ax.axes.set_xlim3d(left=-2, right=2) 
+    # ax.axes.set_ylim3d(bottom=-2, top=2) 
+    # ax.axes.set_zlim3d(bottom=-10, top=10) 
+
+    # plt.ion()
 
     for path in frame_paths:
         cur_img = raw2Undistorted(path,LUT)
@@ -238,12 +327,15 @@ def analyzeVideo():
             x_a.append(kp1[matches[k][0].queryIdx].pt)
             x_b.append(kp2[matches[k][0].trainIdx].pt)
 
+        x_a = convertImageCoordToCenter(x_a,prev_img.shape[1],prev_img.shape[0])
+        x_b = convertImageCoordToCenter(x_b,cur_img.shape[1],cur_img.shape[0])
+
         # Find set of inliers using RANSAC
-        F,inliers = inlierRANSAC(x_a,x_b,iterations=10)
+        F,inliers = inlierRANSAC(x_a,x_b,iterations=50)
 
         # Estimate Essential Matrix
-        E = K.T @ F @ K
-
+        E = estimateEssentialMatrix(F,K)
+        
         # Extract 4 Possible Camera Poses
         Cset,Rset = extractCameraPose(E)
 
@@ -256,32 +348,32 @@ def analyzeVideo():
 
         C,R = Cheirality(Cset,Rset,Xset)
 
-        last_point = camera_origin.copy()
-        camera_origin += C
+        current_point = last_point + C
 
-        # ax.scatter3D(camera_origin[0], camera_origin[1], camera_origin[2])
+        # # ax.scatter3D(camera_origin[0], camera_origin[1], camera_origin[2])
+        # # ax.plot3D(xs,ys,zs,'gray')  
 
-        xs = [last_point[0,0],camera_origin[0,0]]
+        xs = [last_point[0,0],current_point[0,0]]
+        ys = [last_point[1,0],current_point[1,0]]
+        zs = [last_point[2,0],current_point[2,0]]
 
-        ys = [last_point[1,0],camera_origin[1,0]]
+        # plt.plot(xs,zs)
+        # plt.draw()
+        # plt.pause(.001)
 
-        zs = [last_point[2,0],camera_origin[2,0]]
-
-        ax.plot3D(xs,ys,zs,'gray')
-        plt.draw()
-        plt.pause(.001)
-
-        match_img = showMatches(prev_img,cur_img,inliers)
-        cv2.imshow("Matches",match_img)
-        # cv2.waitKey(0)
+        # # match_img = showMatches(prev_img,cur_img,inliers)
+        # # cv2.imshow("Matches",match_img)
+        # # cv2.waitKey(0)
 
         # change current values to previous values for next loop
         prev_img = cur_img
         kp1, des1 = kp2, des2
-        C0 = C
-        R0 = R
 
-        # cv2.imshow('Frame',cur_img)
+        last_point = current_point
+        # # C0 = C
+        # # R0 = R
+
+        cv2.imshow('Frame',cur_img)
 
         if (cv2.waitKey(10) == ord('q')):
             exit()
