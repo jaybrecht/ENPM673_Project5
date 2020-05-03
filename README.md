@@ -9,3 +9,9 @@ To run this file please download and unzip the folder Oxford_dataset from this [
 ## Dependencies
 	cv2
 	opencv_contrib
+	random
+	math
+	numpy
+	os
+	sys
+	
