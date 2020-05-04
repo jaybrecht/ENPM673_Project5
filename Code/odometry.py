@@ -314,6 +314,26 @@ def drawMatches(matches):
     cv2.waitKey(0)
 
 
+def visualize(fig,ax,match_img,xs,ys,zs):
+    x=xs[0]
+    y=ys[0]
+    z=zs[0]
+    ax.scatter(xs,ys,zs)
+    ax.set_xlabel('X Label')
+    ax.set_ylabel('Y Label')
+    ax.set_zlabel('Z Label')
+    plt.savefig("graph.png")
+
+    graph=cv2.imread("graph.png")
+    # cv2.imshow("graph",graph)
+    # cv2.waitKey(0)
+    threepanel=np.concatenate((match_img,graph),axis=1)
+    small=cv2.resize(threepanel,(1500,500))
+    cv2.imshow("Matches and Graph",small)
+    cv2.waitKey(0)
+
+
+
 def analyzeVideo():
     onlyFirstFrame = False
     path = '../Oxford_dataset/stereo/centre/'
@@ -407,6 +427,12 @@ def analyzeVideo():
         match_img = showMatches(prev_img,cur_img,ns_inliers)
         cv2.imshow("Matches",match_img)
         # cv2.waitKey(0)
+
+        # Visualizer
+        dpi=300
+        fig=plt.figure(figsize=(cur_img.shape[1]/dpi,cur_img.shape[0]/dpi),dpi=dpi)
+        ax=fig.add_subplot(111,projection='3d')
+        visualize(match_img,xs,ys,zs)
 
         # change current values to previous values for next loop
         prev_img = cur_img
