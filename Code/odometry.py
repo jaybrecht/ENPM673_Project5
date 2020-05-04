@@ -16,6 +16,7 @@ def raw2Undistorted(img_path,LUT):
     img =  cv2.imread(img_path,cv2.IMREAD_UNCHANGED)
     img = cv2.cvtColor(img,cv2.COLOR_BayerGR2BGR)
     img = UndistortImage(img,LUT)
+
     return img
 
 
@@ -281,17 +282,19 @@ def Cheirality(Cset,Rset,Xset):
 
 def showMatches(img1,img2,inliers):
     w = img1.shape[1]
-    match_img = np.concatenate((img1,img2),axis=1)
+    match_img = np.hstack((img1,img2))
+
+    drawing_img = match_img.copy()
     for p1,p2 in inliers:
         x,y = p1
         x_,y_ = p2
         p1 = (int(x),int(y))
         p2 = (int(x_+w),int(y_))
-        match_img = cv2.circle(match_img,p1,3,(0,0,255),-1)
-        match_img = cv2.circle(match_img,p2,3,(0,0,255),-1)
-        match_img = cv2.line(match_img,p1,p2,(0,255,0),1)
+        cv2.circle(drawing_img,p1,3,(0,0,255),-1)
+        cv2.circle(drawing_img,p2,3,(0,0,255),-1)
+        cv2.line(drawing_img,p1,p2,(0,255,0),1)
 
-    return match_img
+    return drawing_img
 
 
 def drawMatches(matches):
@@ -318,19 +321,20 @@ def visualize(fig,ax,match_img,xs,ys,zs):
     x=xs[0]
     y=ys[0]
     z=zs[0]
-    ax.scatter(xs,ys,zs)
+    ax.scatter(x,y,z)
     ax.set_xlabel('X Label')
     ax.set_ylabel('Y Label')
     ax.set_zlabel('Z Label')
     plt.savefig("graph.png")
 
     graph=cv2.imread("graph.png")
+
+    print(match_img.shape)
     # cv2.imshow("graph",graph)
     # cv2.waitKey(0)
     threepanel=np.concatenate((match_img,graph),axis=1)
-    small=cv2.resize(threepanel,(1500,500))
-    cv2.imshow("Matches and Graph",small)
-    cv2.waitKey(0)
+    # small=cv2.resize(threepanel,(1500,500))
+    cv2.imshow("Matches and Graph",threepanel)
 
 
 
@@ -365,12 +369,16 @@ def analyzeVideo():
     C0 = np.array([[0,0,0]]).T
     R0 = np.identity(3)
 
-    fig = plt.figure()
-    plt.ylabel('Z')
-    plt.xlabel('Y')
-    plt.axis([-10, 10, -10, 10])
+    # fig = plt.figure()
+    # plt.ylabel('Z')
+    # plt.xlabel('Y')
+    # plt.axis([-10, 10, -10, 10])
 
-    plt.ion()
+    # plt.ion()
+
+    dpi=300
+    fig=plt.figure(figsize=(prev_img.shape[1]/dpi,prev_img.shape[0]/dpi),dpi=dpi)
+    ax=fig.add_subplot(111,projection='3d')
 
     for path in frame_paths:
         cur_img = raw2Undistorted(path,LUT)
@@ -420,19 +428,14 @@ def analyzeVideo():
         ys = [last_point[1,0],current_point[1,0]]
         zs = [last_point[2,0],current_point[2,0]]
 
-        plt.plot(ys,zs)
-        plt.draw()
-        plt.pause(.001)
+        # plt.plot(ys,zs)
+        # plt.draw()
+        # plt.pause(.001)
 
         match_img = showMatches(prev_img,cur_img,ns_inliers)
-        cv2.imshow("Matches",match_img)
-        # cv2.waitKey(0)
 
         # Visualizer
-        dpi=300
-        fig=plt.figure(figsize=(cur_img.shape[1]/dpi,cur_img.shape[0]/dpi),dpi=dpi)
-        ax=fig.add_subplot(111,projection='3d')
-        visualize(match_img,xs,ys,zs)
+        visualize(fig,ax,match_img,xs,ys,zs)
 
         # change current values to previous values for next loop
         prev_img = cur_img
