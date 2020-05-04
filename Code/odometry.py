@@ -317,29 +317,20 @@ def drawMatches(matches):
     cv2.waitKey(0)
 
 
-def visualize(fig,ax,match_img,xs,ys,zs):
-    x=xs[0]
-    y=ys[0]
-    z=zs[0]
-    ax.scatter(x,y,z)
-    ax.set_xlabel('X Label')
-    ax.set_ylabel('Y Label')
-    ax.set_zlabel('Z Label')
-    plt.savefig("graph.png")
-
-    graph=cv2.imread("graph.png")
-
-    print(match_img.shape)
-    # cv2.imshow("graph",graph)
-    # cv2.waitKey(0)
-    threepanel=np.concatenate((match_img,graph),axis=1)
-    # small=cv2.resize(threepanel,(1500,500))
-    cv2.imshow("Matches and Graph",threepanel)
-
+def plot2image(canvas,ax,x,y,width):
+    ax.plot(x,y)
+    canvas.draw()
+    img = np.frombuffer(canvas.tostring_rgb(), dtype=np.uint8).reshape(canvas.get_width_height()[::-1] + (3,))
+    img = cv2.cvtColor(img,cv2.COLOR_RGB2BGR)
+    h,w = img.shape
+    new_h=int(h*(w/width))
+    img = cv2.resize(img,(width,new_h))
+    return img
 
 
 def analyzeVideo():
     onlyFirstFrame = False
+    output=True
     path = '../Oxford_dataset/stereo/centre/'
     frame_paths = []
     for img in os.listdir(path):
@@ -362,6 +353,7 @@ def analyzeVideo():
     flann = cv2.FlannBasedMatcher(index_params,search_params)
 
     prev_img =  raw2Undistorted(frame_paths.pop(0),LUT)
+    width = prev_img.shape[1]
     kp1, des1 = surf.detectAndCompute(prev_img,None)
 
     camera_origin = np.array([[0,0,0]],dtype='float64').T
@@ -377,10 +369,21 @@ def analyzeVideo():
     # plt.ion()
 
     dpi=300
-    fig=plt.figure(figsize=(prev_img.shape[1]/dpi,prev_img.shape[0]/dpi),dpi=dpi)
-    ax=fig.add_subplot(111,projection='3d')
+    fig1=plt.figure()
+    ax1=fig.add_subplot(111)
+    canvas1 = FigureCanvas(fig1)
+    ax1.set_xlabel('X')
+    ax1.set_ylabel('Z')
 
-    for path in frame_paths:
+    fig2=plt.figure()
+    ax2=fig.add_subplot(111)
+    canvas2 = FigureCanvas(fig2)
+    ax2.set_xlabel('Y')
+    ax2.set_ylabel('Z')
+
+
+
+    for frame_count,path in enumerate(frame_paths):
         cur_img = raw2Undistorted(path,LUT)
 
         # Find keypoints
@@ -435,8 +438,24 @@ def analyzeVideo():
         match_img = showMatches(prev_img,cur_img,ns_inliers)
 
         # Visualizer
-        visualize(fig,ax,match_img,xs,ys,zs)
+        graph1=plot2image(canvas1,ax1,x,y,width)
+        graph2=plot2image(canvas2,ax2,x,y,width)
+        graphs=np.hstack((graph1,graph2))
+        matchesgraphs=np.vstack((match_img,graphs))
+        cv2.imshow("Matches and Graphs", matchesgraphs)
+        cv2.waitKey(0)
+        if output:
+            if frame_count == 0:
+                fourcc = cv2.VideoWriter_fourcc('m', 'p', '4', 'v')
+                filename = 'camera tracker.mp4'
+                fps_out = 35
+                
+                if os.path.exists(filename):
+                    os.remove(filename)
 
+                print('Writing to video. Please Wait.')
+                out = cv2.VideoWriter(filename, fourcc, fps_out, (matchesgraphs.shape[1],matchesgraphs.shape[0]))
+            out.write(matchesgraphs)
         # change current values to previous values for next loop
         prev_img = cur_img
         kp1, des1 = kp2, des2
