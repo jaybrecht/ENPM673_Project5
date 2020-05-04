@@ -21,27 +21,59 @@ def raw2Undistorted(img_path,LUT):
 
 def convertImageCoordToCenter(pts,w,h):
     center_points = []
+
+    orig_x = []
+    orig_y = []
+
+    centered_x = []
+    centered_y = []
+
+    scaled_x = []
+    scaled_y = []
+
     for x,y in pts:
         new_x = x-(w/2)
         new_y = -(y-(h/2))
         center_points.append((new_x,new_y))
-    
+
+        orig_x.append(x)
+        orig_y.append(y)
+        centered_x.append(new_x)
+        centered_y.append(new_y)      
+
+
     d_sum = 0
     for x,y in center_points:
         d_sum += math.sqrt(x**2+y**2)
 
     msd = d_sum/len(center_points)
 
-    scale_factor = 2
+    scale_factor = 10
     d_sum = 0
     scaled_points = []
     for x,y in center_points:
-        x *= scale_factor/msd
-        y *= scale_factor/msd
-        d_sum += math.sqrt(x**2+y**2)
-        scaled_points.append((x,y))
+        new_x = x * (scale_factor/msd)
+        new_y = y * (scale_factor/msd)
+        d_sum += math.sqrt(new_x**2+new_y**2)
+        scaled_points.append((new_x,new_y))
+
+        scaled_x.append(new_x)
+        scaled_y.append(new_y)   
 
     new_msd = d_sum/len(scaled_points)
+
+    # fig = plt.figure()
+    # ax = fig.add_subplot(111)
+    # plt.ylabel('y')
+    # plt.xlabel('x')
+
+    # ax.scatter(orig_x,orig_y,c='red',label='Original')
+    # ax.scatter(centered_x,centered_y,c='blue',label='Centered')
+    # ax.scatter(scaled_x,scaled_y,c='green',label='Scaled')
+
+    # plt.legend()
+    # plt.show()
+
 
     return scaled_points
 
@@ -79,10 +111,12 @@ def inlierRANSAC(x_a,x_b,iterations):
     S_in = []
     points = 8
     n = 0
-    epsilon = .01
+    epsilon = .005
+    max_pts = 1000
 
     for i in range(iterations):
         x1,x2 = [],[]
+        mask = []
 
         for j in range(points):
             k = random.randint(0,len(x_a)-1)
@@ -98,17 +132,25 @@ def inlierRANSAC(x_a,x_b,iterations):
             val = abs(x2j.T @ F @ x1j)
             if val < epsilon:
                 S.append([p1,p2])
+                mask.append(1)
+            else:
+                mask.append(0)
 
-        if len(S) >= n:
+        if len(S) > n:
             n = len(S)
             S_in = S
             Best_F = F
+            best_mask = mask
 
-    return Best_F,S_in
+        # if len(S) > max_pts:
+        #     break
+
+    return Best_F,S_in,best_mask
 
 
 def estimateEssentialMatrix(F,K):
     E = K.T @ F @ K
+
     U,S,Vh = np.linalg.svd(E)
     S_ = np.array([[1,0,0],[0,1,0],[0,0,0]])
     E = U @ S_ @ Vh
@@ -121,20 +163,26 @@ def extractCameraPose(E):
     W = np.array([[0,-1,0],[1,0,0],[0,0,1]])
 
     U,D,Vt = np.linalg.svd(E)
-    print(U)
-    print(U[:,2])
-    C = [U[:,2],-U[:,2],U[:,2],-U[:,2]]
-    R = [U @ W @ Vt, U @ W @ Vt, U @ W.T @ Vt, U @ W.T @ Vt]
 
-    Cset,Rset = [],[]
-    for c,r in zip(C,R):
-        det = np.linalg.det(r)
-        if int(det) == -1:
-            c *= -1
-            r *= -1
-        c.shape = (3,1)
-        Cset.append(c)
-        Rset.append(r)
+    C_a = U[:,2].reshape(3,1)
+    C_b = -U[:,2].reshape(3,1)
+
+    R_a = U @ W @ Vt
+    R_b = U @ W.T @ Vt
+
+    Cset = [C_a,C_b,C_a,C_b]
+    Rset = [R_a,R_a,R_b,R_b]
+
+    if int(np.linalg.det(R_a)) == -1:
+        for i in range(2):
+            Cset[i] = -Cset[i]
+            Rset[i] = -Rset[i]
+
+    if int(np.linalg.det(R_b)) == -1:
+        for i in range(2,4):
+            Cset[i] = -Cset[i]
+            Rset[i] = -Rset[i]
+
 
     return Cset,Rset
 
@@ -163,12 +211,10 @@ def checkCheirality(X_,R,T):
 
 
 def LinearTriangulation(K, C1, R1, C2, R2, inliers):
-    # I=np.identity(3)
-    # P1=K @ R1 @ np.concatenate((I,-C1),axis=1)
-    # P2=K @ R2 @ np.concatenate((I,-C2),axis=1)
+    I=np.identity(3)
 
-    P1=K @ np.concatenate((R1,C1),axis=1)
-    P2=K @ np.concatenate((R2,C2),axis=1)
+    P1=K @ R1 @ np.concatenate((I,-C1),axis=1)
+    P2=K @ R2 @ np.concatenate((I,-C2),axis=1)
 
     p1=P1[0,:]
     p2=P1[1,:]
@@ -183,17 +229,17 @@ def LinearTriangulation(K, C1, R1, C2, R2, inliers):
         x,y = pt1
         x_,y_ = pt2
 
-        r1 = y*p3-p2
-        r2 = p1-x*p3
-        r3 = y_*p3_-p2_
-        r4 = p1_-x_*p3_
+        r1 = (y*p3)-p2
+        r2 = p1-(x*p3)
+        r3 = (y_*p3_)-p2_
+        r4 = p1_-(x_*p3_)
 
         A=np.stack((r1,r2,r3,r4))
 
         U,D,Vt = np.linalg.svd(A)
 
-        hc = Vt[-1]
-        
+        hc = Vt[-1,:]/Vt[-1,3]
+
         X_ = np.array([[hc[0]],[hc[1]],[hc[2]]])
 
         X.append(X_) 
@@ -203,19 +249,19 @@ def LinearTriangulation(K, C1, R1, C2, R2, inliers):
 
 def Cheirality(Cset,Rset,Xset):
     counts=[]
-    colors = ['red','green','yellow','blue']
-    markers = ['s','s','o','.']
+    colors = ['green','yellow','blue','red']
 
-    fig = plt.figure()
-    ax = fig.add_subplot(111)
-    plt.ylabel('Z')
-    plt.xlabel('X')
-    plt.axis([-10, 10, -10, 10])
+    # fig = plt.figure()
+    # ax = fig.add_subplot(111)
+    # plt.ylabel('Z')
+    # plt.xlabel('X')
+    # plt.axis([-10000, 10000, -10000, 10000])
     x,y,z = [],[],[]
 
-    for C,R,X_,color,marker in zip(Cset,Rset,Xset,colors,markers):
+    for C,R,X_,color in zip(Cset,Rset,Xset,colors):
         count=0
         r3=R[-1,:]
+        x,y,z = [],[],[]
         for X in X_:
             x.append(X[0])
             y.append(X[1])
@@ -224,11 +270,9 @@ def Cheirality(Cset,Rset,Xset):
             if val>0:
                 count+=1
         counts.append(count)
-        ax.scatter(x,y,c=color,marker=marker,label=color)
+        # ax.scatter(x,z,c=color)
 
-    plt.legend(loc='upper left');
-    plt.show()
-
+    # plt.show()
 
     ind=counts.index(max(counts))
 
@@ -271,7 +315,7 @@ def drawMatches(matches):
 
 
 def analyzeVideo():
-    onlyFirstFrame = True
+    onlyFirstFrame = False
     path = '../Oxford_dataset/stereo/centre/'
     frame_paths = []
     for img in os.listdir(path):
@@ -301,17 +345,12 @@ def analyzeVideo():
     C0 = np.array([[0,0,0]]).T
     R0 = np.identity(3)
 
-    # fig = plt.figure()
-    # plt.ylabel('Z')
-    # plt.xlabel('X')
-    # plt.axis([-10, 10, -10, 10])
+    fig = plt.figure()
+    plt.ylabel('Z')
+    plt.xlabel('Y')
+    plt.axis([-10, 10, -10, 10])
 
-    # ax = fig.add_subplot(111, projection='3d')
-    # ax.axes.set_xlim3d(left=-2, right=2) 
-    # ax.axes.set_ylim3d(bottom=-2, top=2) 
-    # ax.axes.set_zlim3d(bottom=-10, top=10) 
-
-    # plt.ion()
+    plt.ion()
 
     for path in frame_paths:
         cur_img = raw2Undistorted(path,LUT)
@@ -327,11 +366,18 @@ def analyzeVideo():
             x_a.append(kp1[matches[k][0].queryIdx].pt)
             x_b.append(kp2[matches[k][0].trainIdx].pt)
 
-        x_a = convertImageCoordToCenter(x_a,prev_img.shape[1],prev_img.shape[0])
-        x_b = convertImageCoordToCenter(x_b,cur_img.shape[1],cur_img.shape[0])
+        x_a_scaled = convertImageCoordToCenter(x_a,prev_img.shape[1],prev_img.shape[0])
+        x_b_scaled = convertImageCoordToCenter(x_b,cur_img.shape[1],cur_img.shape[0])
 
         # Find set of inliers using RANSAC
-        F,inliers = inlierRANSAC(x_a,x_b,iterations=50)
+        F,inliers,mask = inlierRANSAC(x_a_scaled,x_b_scaled,iterations=50)
+
+        # F,mask = cv2.findFundamentalMat(np.array(x_a),np.array(x_b),cv2.FM_RANSAC)
+
+        ns_inliers = []
+        for i,val in enumerate(mask):
+            if val == 1:
+                ns_inliers.append((x_a[i],x_b[i]))
 
         # Estimate Essential Matrix
         E = estimateEssentialMatrix(F,K)
@@ -350,30 +396,25 @@ def analyzeVideo():
 
         current_point = last_point + C
 
-        # # ax.scatter3D(camera_origin[0], camera_origin[1], camera_origin[2])
-        # # ax.plot3D(xs,ys,zs,'gray')  
-
         xs = [last_point[0,0],current_point[0,0]]
         ys = [last_point[1,0],current_point[1,0]]
         zs = [last_point[2,0],current_point[2,0]]
 
-        # plt.plot(xs,zs)
-        # plt.draw()
-        # plt.pause(.001)
+        plt.plot(ys,zs)
+        plt.draw()
+        plt.pause(.001)
 
-        # # match_img = showMatches(prev_img,cur_img,inliers)
-        # # cv2.imshow("Matches",match_img)
-        # # cv2.waitKey(0)
+        match_img = showMatches(prev_img,cur_img,ns_inliers)
+        cv2.imshow("Matches",match_img)
+        # cv2.waitKey(0)
 
         # change current values to previous values for next loop
         prev_img = cur_img
         kp1, des1 = kp2, des2
 
         last_point = current_point
-        # # C0 = C
-        # # R0 = R
 
-        cv2.imshow('Frame',cur_img)
+        # cv2.imshow('Frame',cur_img)
 
         if (cv2.waitKey(10) == ord('q')):
             exit()
