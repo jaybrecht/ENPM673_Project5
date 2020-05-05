@@ -64,19 +64,6 @@ def convertImageCoordToCenter(pts,w,h):
 
     new_msd = d_sum/len(scaled_points)
 
-    # fig = plt.figure()
-    # ax = fig.add_subplot(111)
-    # plt.ylabel('y')
-    # plt.xlabel('x')
-
-    # ax.scatter(orig_x,orig_y,c='red',label='Original')
-    # ax.scatter(centered_x,centered_y,c='blue',label='Centered')
-    # ax.scatter(scaled_x,scaled_y,c='green',label='Scaled')
-
-    # plt.legend()
-    # plt.show()
-
-
     return scaled_points
 
 
@@ -323,7 +310,7 @@ def plot2image(canvas,ax,x,y,width):
 
 def analyzeVideo():
     onlyFirstFrame = False
-    output=True
+    output= True
     path = '../Oxford_dataset/stereo/centre/'
     frame_paths = []
     for img in os.listdir(path):
@@ -353,6 +340,9 @@ def analyzeVideo():
     last_point = camera_origin
     C0 = np.array([[0,0,0]]).T
     R0 = np.identity(3)
+    bot_row = np.array([0,0,0,1])
+    T_last = np.hstack((R0,C0))
+    T_last = np.vstack((T_last,bot_row))
 
     dpi=300
     fig1=plt.figure()
@@ -387,7 +377,8 @@ def analyzeVideo():
         x_b_scaled = convertImageCoordToCenter(x_b,cur_img.shape[1],cur_img.shape[0])
 
         # Find set of inliers using RANSAC
-        F,inliers,mask = inlierRANSAC(x_a_scaled,x_b_scaled,iterations=10)
+        F,inliers,mask = inlierRANSAC(x_a_scaled,x_b_scaled,iterations=20)
+        # F,inliers,mask = inlierRANSAC(x_a,x_b,iterations=50)
 
         ns_inliers = []
         for i,val in enumerate(mask):
@@ -412,11 +403,22 @@ def analyzeVideo():
         # Find which configuration passes the cheirality check
         C,R = Cheirality(Cset,Rset,Xset)
 
+        if np.linalg.det(R) < 0:
+            R = -R
+            C = -C
+
         # Plot the trajectory
-        current_point = last_point + C
-        xs = [last_point[0,0],current_point[0,0]]
-        ys = [last_point[1,0],current_point[1,0]]
-        zs = [last_point[2,0],current_point[2,0]]
+
+        T_cur = np.hstack((R,C))
+        T_cur = np.vstack((T_cur,bot_row))
+
+        T_tot = T_last @ T_cur
+        # current_point = last_point + C
+        current_point = T_tot[:,-1]
+
+        xs = [last_point[0],current_point[0]]
+        ys = [last_point[1],current_point[1]]
+        zs = [last_point[2],current_point[2]]
 
         # Visualizer
         graph1=plot2image(canvas1,ax1,xs,zs,width)
@@ -437,12 +439,14 @@ def analyzeVideo():
 
                 print('Writing to video. Please Wait.')
                 out = cv2.VideoWriter(filename, fourcc, fps_out, (matchesgraphs.shape[1],matchesgraphs.shape[0]))
+            print('Frame ' + str(frame_count) + ' of ' + str(len(frame_paths)))
             out.write(matchesgraphs)
         # change current values to previous values for next loop
         prev_img = cur_img
         kp1, des1 = kp2, des2
 
         last_point = current_point
+        T_last = T_tot
 
         # cv2.imshow('Frame',cur_img)
 
