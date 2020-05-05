@@ -2,6 +2,7 @@ import cv2
 import numpy as np
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
+from matplotlib.backends.backend_agg import FigureCanvasAgg as FigureCanvas
 import random
 import os
 import sys
@@ -252,11 +253,6 @@ def Cheirality(Cset,Rset,Xset):
     counts=[]
     colors = ['green','yellow','blue','red']
 
-    # fig = plt.figure()
-    # ax = fig.add_subplot(111)
-    # plt.ylabel('Z')
-    # plt.xlabel('X')
-    # plt.axis([-10000, 10000, -10000, 10000])
     x,y,z = [],[],[]
 
     for C,R,X_,color in zip(Cset,Rset,Xset,colors):
@@ -271,9 +267,6 @@ def Cheirality(Cset,Rset,Xset):
             if val>0:
                 count+=1
         counts.append(count)
-        # ax.scatter(x,z,c=color)
-
-    # plt.show()
 
     ind=counts.index(max(counts))
 
@@ -322,8 +315,8 @@ def plot2image(canvas,ax,x,y,width):
     canvas.draw()
     img = np.frombuffer(canvas.tostring_rgb(), dtype=np.uint8).reshape(canvas.get_width_height()[::-1] + (3,))
     img = cv2.cvtColor(img,cv2.COLOR_RGB2BGR)
-    h,w = img.shape
-    new_h=int(h*(w/width))
+    h,w,ch = img.shape
+    new_h=int(h*(width/w))
     img = cv2.resize(img,(width,new_h))
     return img
 
@@ -361,27 +354,20 @@ def analyzeVideo():
     C0 = np.array([[0,0,0]]).T
     R0 = np.identity(3)
 
-    # fig = plt.figure()
-    # plt.ylabel('Z')
-    # plt.xlabel('Y')
-    # plt.axis([-10, 10, -10, 10])
-
-    # plt.ion()
-
     dpi=300
     fig1=plt.figure()
-    ax1=fig.add_subplot(111)
+    ax1=fig1.add_subplot(111)
     canvas1 = FigureCanvas(fig1)
+    ax1.axis('equal')
     ax1.set_xlabel('X')
     ax1.set_ylabel('Z')
 
     fig2=plt.figure()
-    ax2=fig.add_subplot(111)
+    ax2=fig2.add_subplot(111)
     canvas2 = FigureCanvas(fig2)
+    ax2.axis('equal')
     ax2.set_xlabel('Y')
     ax2.set_ylabel('Z')
-
-
 
     for frame_count,path in enumerate(frame_paths):
         cur_img = raw2Undistorted(path,LUT)
@@ -401,14 +387,14 @@ def analyzeVideo():
         x_b_scaled = convertImageCoordToCenter(x_b,cur_img.shape[1],cur_img.shape[0])
 
         # Find set of inliers using RANSAC
-        F,inliers,mask = inlierRANSAC(x_a_scaled,x_b_scaled,iterations=50)
-
-        # F,mask = cv2.findFundamentalMat(np.array(x_a),np.array(x_b),cv2.FM_RANSAC)
+        F,inliers,mask = inlierRANSAC(x_a_scaled,x_b_scaled,iterations=10)
 
         ns_inliers = []
         for i,val in enumerate(mask):
             if val == 1:
                 ns_inliers.append((x_a[i],x_b[i]))
+
+        match_img = showMatches(prev_img,cur_img,ns_inliers)            
 
         # Estimate Essential Matrix
         E = estimateEssentialMatrix(F,K)
@@ -423,32 +409,28 @@ def analyzeVideo():
             X = LinearTriangulation(K, C0, R0, C, R, inliers)
             Xset.append(X)
 
+        # Find which configuration passes the cheirality check
         C,R = Cheirality(Cset,Rset,Xset)
 
+        # Plot the trajectory
         current_point = last_point + C
-
         xs = [last_point[0,0],current_point[0,0]]
         ys = [last_point[1,0],current_point[1,0]]
         zs = [last_point[2,0],current_point[2,0]]
 
-        # plt.plot(ys,zs)
-        # plt.draw()
-        # plt.pause(.001)
-
-        match_img = showMatches(prev_img,cur_img,ns_inliers)
-
         # Visualizer
-        graph1=plot2image(canvas1,ax1,x,y,width)
-        graph2=plot2image(canvas2,ax2,x,y,width)
+        graph1=plot2image(canvas1,ax1,xs,zs,width)
+        graph2=plot2image(canvas2,ax2,ys,zs,width)
         graphs=np.hstack((graph1,graph2))
         matchesgraphs=np.vstack((match_img,graphs))
         cv2.imshow("Matches and Graphs", matchesgraphs)
-        cv2.waitKey(0)
+
+
         if output:
             if frame_count == 0:
                 fourcc = cv2.VideoWriter_fourcc('m', 'p', '4', 'v')
                 filename = 'camera tracker.mp4'
-                fps_out = 35
+                fps_out = 10
                 
                 if os.path.exists(filename):
                     os.remove(filename)
@@ -465,10 +447,12 @@ def analyzeVideo():
         # cv2.imshow('Frame',cur_img)
 
         if (cv2.waitKey(10) == ord('q')):
-            exit()
+            break
 
         if onlyFirstFrame:
             exit()
+
+    out.release()
 
 
 if __name__ == "__main__":
